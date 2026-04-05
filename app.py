@@ -5,67 +5,66 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime
 
-# إعدادات الصفحة
-st.set_page_config(page_title="Ultra Market Scanner", layout="wide", page_icon="💰")
+# إعدادات الصفحة لتكون عريضة وبنفس الستايل
+st.set_page_config(page_title="Pro Market Scanner", layout="wide", page_icon="📈")
+
+# تحسين المظهر باستخدام CSS ليطابق الصورة
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetric"] {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        padding: 15px;
+    }
+    .stAlert { border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # =========================
-# قائمة عملات الفوركس وبقية الأصول
+# قائمة الأصول المحدثة (فوركس + عملات رقمية + معادن)
 # =========================
 asset_groups = {
+    "العملات الرقمية": {
+        "Bitcoin (BTC/USD)": "BTC-USD",
+        "Ethereum (ETH/USD)": "ETH-USD",
+        "Solana (SOL/USD)": "SOL-USD",
+        "Ripple (XRP/USD)": "XRP-USD"
+    },
     "سوق العملات (Forex)": {
         "EUR/USD": "EURUSD=X",
         "GBP/USD": "GBPUSD=X",
         "USD/JPY": "JPY=X",
         "AUD/USD": "AUDUSD=X",
-        "USD/CAD": "USDCAD=X",
-        "USD/CHF": "USDCHF=X",
-        "NZD/USD": "NZDUSD=X",
-        "EUR/GBP": "EURGBP=X",
-        "EUR/JPY": "EURJPY=X",
-        "GBP/JPY": "GBPJPY=X"
-    },
-    "العملات الرقمية": {
-        "Bitcoin (BTC)": "BTC-USD",
-        "Ethereum (ETH)": "ETH-USD",
-        "Solana (SOL)": "SOL-USD",
-        "Binance Coin (BNB)": "BNB-USD",
-        "Ripple (XRP)": "XRP-USD"
+        "USD/CAD": "USDCAD=X"
     },
     "المعادن والطاقة": {
         "الذهب (Gold)": "GC=F",
         "الفضة (Silver)": "SI=F",
-        "النفط (Oil WTI)": "CL=F",
-        "الغاز الطبيعي (Gas)": "NG=F"
+        "النفط (Oil)": "CL=F"
     }
 }
 
 # =========================
-# الإعدادات الجانبية
+# القائمة الجانبية (Sidebar)
 # =========================
-st.sidebar.header("🕹️ لوحة التحكم")
-group = st.sidebar.selectbox("اختر الفئة", list(asset_groups.keys()))
-asset_name = st.sidebar.selectbox("اختر الزوج", list(asset_groups[group].keys()))
+st.sidebar.header("🔍 رادار الأسواق")
+group = st.sidebar.selectbox("اختر فئة الأصول", list(asset_groups.keys()))
+asset_name = st.sidebar.selectbox("اختر الأداة المالية", list(asset_groups[group].keys()))
 symbol = asset_groups[group][asset_name]
 
-# تعديل الفريمات وإصلاح مشكلة الـ 5 دقائق
-timeframe = st.sidebar.selectbox("الفريم الزمني", ["1m", "5m", "15m", "1h", "4h", "1d"], index=1)
+# إضافة فريم الـ 5 دقائق مع إصلاح المشكلة
+timeframe = st.sidebar.selectbox("الفريم الزمني", ["5m", "15m", "30m", "1h", "4h", "1d"], index=0)
 
 # =========================
-# جلب البيانات مع إصلاح الفريمات الصغيرة
+# جلب ومعالجة البيانات
 # =========================
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def fetch_data(symbol, tf):
-    # تحديد المدة المسموح بها لكل فريم (yfinance strict rules)
-    period_map = {
-        "1m": "1d",     # الدقيقة تحتاج يوم واحد فقط
-        "5m": "5d",     # 5 دقائق تحتاج بحد أقصى 5-7 أيام
-        "15m": "5d",
-        "1h": "1mo",
-        "4h": "3mo",
-        "1d": "max"
-    }
-    
-    df = yf.download(symbol, period=period_map[tf], interval=tf, progress=False, auto_adjust=True)
+    # إصلاح: فريم الـ 5 دقائق يتطلب فترة لا تزيد عن 60 يوم في yfinance
+    p_map = {"5m": "5d", "15m": "7d", "30m": "30d", "1h": "2mo", "4h": "max", "1d": "max"}
+    df = yf.download(symbol, period=p_map[tf], interval=tf, progress=False, auto_adjust=True)
     
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
@@ -73,55 +72,74 @@ def fetch_data(symbol, tf):
     return df
 
 try:
-    with st.spinner('جاري جلب بيانات السوق...'):
-        df = fetch_data(symbol, timeframe)
+    df = fetch_data(symbol, timeframe)
     
-    if df.empty or len(df) < 200:
-        st.warning(f"البيانات المتاحة لفريم {timeframe} قليلة جداً حالياً، جرب فريم أكبر أو انتظر افتتاح السوق.")
+    if df.empty or len(df) < 20:
+        st.error("بيانات غير كافية لهذا الفريم حالياً.")
         st.stop()
 
-    # حساب المؤشرات (EMA 200, RSI, MACD)
+    # حساب المؤشرات الفنية (نفس الموجودة في الصورة)
     df['EMA200'] = ta.ema(df['close'], length=200)
     df['RSI'] = ta.rsi(df['close'], length=14)
-    macd = ta.macd(df['close'])
-    df['MACD'] = macd['MACD_12_26_9']
-    df['Signal'] = macd['MACDs_12_26_9']
+    df['ADX'] = ta.adx(df['high'], df['low'], df['close'])['ADX_14']
+    df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    
+    # حساب Pivot (للأهداف)
+    last_h, last_l, last_c = df['high'].iloc[-2], df['low'].iloc[-2], df['close'].iloc[-2]
+    pivot = (last_h + last_l + last_c) / 3
 
     # =========================
-    # عرض البيانات
+    # عرض البيانات (نفس ستايل الصورة)
     # =========================
-    st.title(f"📈 رادار: {asset_name} ({timeframe})")
+    st.title(f"📊 تحليل {asset_name}")
     
-    last_price = df['close'].iloc[-1]
-    prev_price = df['close'].iloc[-2]
-    diff = last_price - prev_price
-    
-    c1, c2, c3 = st.columns(3)
-    c1.metric("السعر الحالي", f"{last_price:,.4f}", f"{diff:,.4f}")
-    c2.metric("مؤشر RSI", f"{df['RSI'].iloc[-1]:.1f}")
-    
-    # تحديد قوة الاتجاه
-    trend = "صاعد 🟢" if last_price > df['EMA200'].iloc[-1] else "هابط 🔴"
-    c3.metric("الاتجاه العام (EMA200)", trend)
+    # سطر المقاييس (Metrics)
+    curr = df.iloc[-1]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("السعر الحالي", f"{curr['close']:,.2f}")
+    m2.metric("RSI", f"{curr['RSI']:.1f}")
+    m3.metric("ADX قوة الاتجاه", f"{curr['ADX']:.1f}")
+    m4.metric("ATR التذبذب", f"{curr['ATR']:.2f}")
 
-    # الرسم البياني
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="الشموع"))
-    fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], line=dict(color='yellow', width=1.5), name="EMA 200"))
-    
-    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
+    # توزيع الشاشة: الرسم البياني على اليسار ولوحة الإشارة على اليمين
+    col_chart, col_signal = st.columns([3, 1])
 
-    # نظام الإشارات المطور
-    st.subheader("💡 التوصية اللحظية")
-    rsi_val = df['RSI'].iloc[-1]
-    
-    if last_price > df['EMA200'].iloc[-1] and rsi_val < 40:
-        st.success("🔥 فرصة شراء قوية (ارتداد من تشبع بيعي في اتجاه صاعد)")
-    elif last_price < df['EMA200'].iloc[-1] and rsi_val > 60:
-        st.error("📉 فرصة بيع قوية (ارتداد من تشبع شرائي في اتجاه هابط)")
-    else:
-        st.info("⚖️ السوق في حالة تذبذب - انتظر إشارة أوضح")
+    with col_chart:
+        fig = go.Figure()
+        # الشموع اليابانية
+        fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], 
+                                     low=df['low'], close=df['close'], name="Price"))
+        # خط الاتجاه (EMA 200) باللون الأحمر كما في الصورة
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], line=dict(color='#ff4b4b', width=2), name="Trend Line"))
+        
+        fig.update_layout(height=500, template="plotly_dark", xaxis_rangeslider_visible=False,
+                          margin=dict(l=0,r=0,b=0,t=0))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        if st.button("🔄 تحديث البيانات"):
+            st.rerun()
+
+    with col_signal:
+        st.subheader("📋 حالة الإشارة")
+        
+        # منطق الإشارة
+        if curr['close'] > curr['EMA200'] and curr['RSI'] > 50:
+            st.success("🚀 إشارة شراء")
+            tp = curr['close'] + (curr['ATR'] * 2)
+            sl = curr['close'] - (curr['ATR'] * 1.5)
+        elif curr['close'] < curr['EMA200'] and curr['RSI'] < 50:
+            st.error("📉 إشارة بيع")
+            tp = curr['close'] - (curr['ATR'] * 2)
+            sl = curr['close'] + (curr['ATR'] * 1.5)
+        else:
+            st.info("⌛ حالة انتظار")
+            tp, sl = 0, 0
+
+        st.markdown("---")
+        if tp != 0:
+            st.write(f"🎯 **الهدف (TP):** {tp:,.2f}")
+            st.write(f"🛑 **الوقف (SL):** {sl:,.2f}")
+        st.write(f"📍 **نقطة Pivot:** {pivot:,.2f}")
 
 except Exception as e:
-    st.error(f"حدث خطأ: {e}")
+    st.info("جاري تحميل البيانات... يرجى الانتظار")
