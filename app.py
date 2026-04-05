@@ -3,143 +3,86 @@ import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
 
-# إعدادات الصفحة لتكون عريضة وبنفس الستايل
-st.set_page_config(page_title="Pro Market Scanner", layout="wide", page_icon="📈")
+# إعداد الصفحة
+st.set_page_config(page_title="Smart Trader Pro", layout="wide")
 
-# تحسين المظهر باستخدام CSS ليطابق الصورة
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; }
-    div[data-testid="stMetric"] {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 15px;
-    }
-    .stAlert { border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# =========================
-# قائمة الأصول المحدثة (فوركس + عملات رقمية + معادن)
-# =========================
-asset_groups = {
-    "العملات الرقمية": {
-        "Bitcoin (BTC/USD)": "BTC-USD",
-        "Ethereum (ETH/USD)": "ETH-USD",
-        "Solana (SOL/USD)": "SOL-USD",
-        "Ripple (XRP/USD)": "XRP-USD"
-    },
-    "سوق العملات (Forex)": {
-        "EUR/USD": "EURUSD=X",
-        "GBP/USD": "GBPUSD=X",
-        "USD/JPY": "JPY=X",
-        "AUD/USD": "AUDUSD=X",
-        "USD/CAD": "USDCAD=X"
-    },
-    "المعادن والطاقة": {
-        "الذهب (Gold)": "GC=F",
-        "الفضة (Silver)": "SI=F",
-        "النفط (Oil)": "CL=F"
-    }
-}
-
-# =========================
-# القائمة الجانبية (Sidebar)
-# =========================
-st.sidebar.header("🔍 رادار الأسواق")
-group = st.sidebar.selectbox("اختر فئة الأصول", list(asset_groups.keys()))
-asset_name = st.sidebar.selectbox("اختر الأداة المالية", list(asset_groups[group].keys()))
-symbol = asset_groups[group][asset_name]
-
-# إضافة فريم الـ 5 دقائق مع إصلاح المشكلة
-timeframe = st.sidebar.selectbox("الفريم الزمني", ["5m", "15m", "30m", "1h", "4h", "1d"], index=0)
-
-# =========================
-# جلب ومعالجة البيانات
-# =========================
+# --- دالة جلب البيانات مع الفلاتر الجديدة ---
 @st.cache_data(ttl=60)
-def fetch_data(symbol, tf):
-    # إصلاح: فريم الـ 5 دقائق يتطلب فترة لا تزيد عن 60 يوم في yfinance
-    p_map = {"5m": "5d", "15m": "7d", "30m": "30d", "1h": "2mo", "4h": "max", "1d": "max"}
+def get_advanced_data(symbol, tf):
+    p_map = {"5m": "5d", "15m": "7d", "1h": "30d", "4h": "max"}
     df = yf.download(symbol, period=p_map[tf], interval=tf, progress=False, auto_adjust=True)
-    
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df.columns = [col.lower() for col in df.columns]
-    return df
-
-try:
-    df = fetch_data(symbol, timeframe)
     
-    if df.empty or len(df) < 20:
-        st.error("بيانات غير كافية لهذا الفريم حالياً.")
-        st.stop()
-
-    # حساب المؤشرات الفنية (نفس الموجودة في الصورة)
+    # إضافة المؤشرات الأساسية
     df['EMA200'] = ta.ema(df['close'], length=200)
     df['RSI'] = ta.rsi(df['close'], length=14)
-    df['ADX'] = ta.adx(df['high'], df['low'], df['close'])['ADX_14']
-    df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+    df['VOL_AVG'] = ta.sma(df['volume'], length=20) # متوسط السيولة
     
-    # حساب Pivot (للأهداف)
-    last_h, last_l, last_c = df['high'].iloc[-2], df['low'].iloc[-2], df['close'].iloc[-2]
-    pivot = (last_h + last_l + last_c) / 3
+    # تعريف شمعة الابتلاع (Engulfing)
+    df['is_bullish'] = df['close'] > df['open']
+    df['is_engulfing_bull'] = (df['is_bullish']) & (df['close'] > df['open'].shift(1)) & (df['open'] < df['close'].shift(1))
+    df['is_engulfing_bear'] = (~df['is_bullish']) & (df['close'] < df['open'].shift(1)) & (df['open'] > df['close'].shift(1))
+    
+    return df
 
-    # =========================
-    # عرض البيانات (نفس ستايل الصورة)
-    # =========================
-    st.title(f"📊 تحليل {asset_name}")
-    
-    # سطر المقاييس (Metrics)
+# --- واجهة المستخدم ---
+st.sidebar.title("🛠️ إعدادات الرادار")
+symbol_input = st.sidebar.selectbox("اختر الأصل", ["BTC-USD", "ETH-USD", "GC=F", "EURUSD=X", "GBPUSD=X"])
+tf_input = st.sidebar.selectbox("فريم التحليل", ["5m", "15m", "1h", "4h"], index=1)
+
+try:
+    df = get_advanced_data(symbol_input, tf_input)
     curr = df.iloc[-1]
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("السعر الحالي", f"{curr['close']:,.2f}")
-    m2.metric("RSI", f"{curr['RSI']:.1f}")
-    m3.metric("ADX قوة الاتجاه", f"{curr['ADX']:.1f}")
-    m4.metric("ATR التذبذب", f"{curr['ATR']:.2f}")
+    prev = df.iloc[-2]
+    
+    # --- منطق الإشارة الاحترافي ---
+    score = 0  # نظام نقاط لقوة الإشارة
+    
+    # 1. فلتر الاتجاه
+    trend = "صاعد" if curr['close'] > curr['EMA200'] else "هابط"
+    if trend == "صاعد": score += 1
+    else: score -= 1
+    
+    # 2. فلتر الزخم (RSI)
+    if 40 < curr['RSI'] < 60: momentum = "متذبذب"
+    elif curr['RSI'] >= 60: 
+        momentum = "قوي شرائي"
+        score += 1
+    else: 
+        momentum = "قوي بيعي"
+        score -= 1
 
-    # توزيع الشاشة: الرسم البياني على اليسار ولوحة الإشارة على اليمين
-    col_chart, col_signal = st.columns([3, 1])
+    # 3. فلتر السيولة
+    high_vol = curr['volume'] > curr['VOL_AVG']
+    if high_vol: score *= 1.5 # مضاعفة أهمية الإشارة لو السيولة عالية
 
-    with col_chart:
-        fig = go.Figure()
-        # الشموع اليابانية
-        fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], 
-                                     low=df['low'], close=df['close'], name="Price"))
-        # خط الاتجاه (EMA 200) باللون الأحمر كما في الصورة
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], line=dict(color='#ff4b4b', width=2), name="Trend Line"))
-        
-        fig.update_layout(height=500, template="plotly_dark", xaxis_rangeslider_visible=False,
-                          margin=dict(l=0,r=0,b=0,t=0))
-        st.plotly_chart(fig, use_container_width=True)
-        
-        if st.button("🔄 تحديث البيانات"):
-            st.rerun()
+    # --- اتخاذ القرار النهائي ---
+    st.title(f"🚀 تحليل ذكي: {symbol_input}")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("السعر الحالي", f"{curr['close']:,.2f}")
+    col2.metric("حالة السيولة", "عالية 🔥" if high_vol else "ضعيفة ❄️")
+    col3.metric("قوة الإشارة", f"{abs(score):.1f}")
 
-    with col_signal:
-        st.subheader("📋 حالة الإشارة")
-        
-        # منطق الإشارة
-        if curr['close'] > curr['EMA200'] and curr['RSI'] > 50:
-            st.success("🚀 إشارة شراء")
-            tp = curr['close'] + (curr['ATR'] * 2)
-            sl = curr['close'] - (curr['ATR'] * 1.5)
-        elif curr['close'] < curr['EMA200'] and curr['RSI'] < 50:
-            st.error("📉 إشارة بيع")
-            tp = curr['close'] - (curr['ATR'] * 2)
-            sl = curr['close'] + (curr['ATR'] * 1.5)
-        else:
-            st.info("⌛ حالة انتظار")
-            tp, sl = 0, 0
+    if score >= 1.5:
+        st.success(f"💎 **إشارة شراء قوية**: الاتجاه {trend} مع سيولة تدعم الصعود.")
+    elif score <= -1.5:
+        st.error(f"📉 **إشارة بيع قوية**: الاتجاه {trend} مع ضغط بيعي واضح.")
+    else:
+        st.warning("⚠️ **منطقة حيادية**: لا توجد سيولة كافية أو تضارب في المؤشرات.")
 
-        st.markdown("---")
-        if tp != 0:
-            st.write(f"🎯 **الهدف (TP):** {tp:,.2f}")
-            st.write(f"🛑 **الوقف (SL):** {sl:,.2f}")
-        st.write(f"📍 **نقطة Pivot:** {pivot:,.2f}")
+    # الرسم البياني
+    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="الشموع")])
+    fig.add_trace(go.Scatter(x=df.index, y=df['EMA200'], line=dict(color='yellow', width=1.5), name="EMA 200"))
+    
+    # إضافة علامات الابتلاع على الرسم (لو حابب)
+    bull_signals = df[df['is_engulfing_bull']]
+    fig.add_trace(go.Scatter(x=bull_signals.index, y=bull_signals['low']*0.999, mode='markers', marker=dict(symbol='triangle-up', size=10, color='green'), name="ابتلاع شرائي"))
+
+    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
-    st.info("جاري تحميل البيانات... يرجى الانتظار")
+    st.error(f"حدث خطأ في جلب البيانات: {e}")
